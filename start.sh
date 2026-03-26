@@ -10,6 +10,10 @@ else
   cd ~/karmabyte && git pull 2>/dev/null || true
 fi
 
+# Ensure workdir exists
+WORKDIR="${HOME}/karmabyte"
+[ -d "$WORKDIR" ] || WORKDIR="$HOME"
+
 # tmux config
 cat > ~/.tmux.conf << 'TC'
 set -g mouse on
@@ -18,9 +22,9 @@ set -g default-terminal "xterm-256color"
 TC
 
 # Start Claude in tmux
-cd ~/karmabyte
-tmux new-session -d -s claude "claude --dangerously-skip-permissions --continue" || true
-echo "[$(date)] tmux+claude started"
+cd "$WORKDIR"
+tmux new-session -d -s claude "cd $WORKDIR && claude --dangerously-skip-permissions --continue" || true
+echo "[$(date)] tmux+claude started in $WORKDIR"
 
 echo "[$(date)] Starting ttyd on port 7682..."
 
@@ -40,8 +44,8 @@ while true; do
   # Restart claude if tmux session died
   if ! tmux has-session -t claude 2>/dev/null; then
     echo "[$(date)] Claude died, restarting..."
-    cd ~/karmabyte
-    tmux new-session -d -s claude "claude --dangerously-skip-permissions --continue"
+    cd "$WORKDIR"
+    tmux new-session -d -s claude "cd $WORKDIR && claude --dangerously-skip-permissions --continue"
   fi
 
   # Restart ttyd if died
