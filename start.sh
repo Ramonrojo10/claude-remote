@@ -1,38 +1,57 @@
 #!/bin/bash
 set -e
 
-# Setup Claude auth from env vars if provided
-if [ -n "$CLAUDE_AUTH_TOKEN" ] && [ -n "$CLAUDE_REFRESH_TOKEN" ]; then
-  cat > /root/.claude/.credentials.json << CREDS
-{
-  "claudeAiOauth": {
-    "accessToken": "$CLAUDE_AUTH_TOKEN",
-    "refreshToken": "$CLAUDE_REFRESH_TOKEN",
-    "expiresAt": ${CLAUDE_TOKEN_EXPIRES:-1774277003256},
-    "scopes": ["user:file_upload","user:inference","user:mcp_servers","user:profile","user:sessions:claude_code"],
-    "subscriptionType": "pro",
-    "rateLimitTier": "default_claude_ai"
-  },
-  "organizationUuid": "${CLAUDE_ORG_UUID:-2ad76a5b-c418-4f9b-9a6a-02b5db343954}"
-}
-CREDS
-  echo "Claude credentials configured from env vars"
+echo "[$(date)] Starting Claude Remote..."
+
+# Clone or pull repo
+if [ ! -d ~/karmabyte/.git ]; then
+  git clone https://github.com/Ramonrojo10/karmabyte.git ~/karmabyte 2>/dev/null || true
+else
+  cd ~/karmabyte && git pull 2>/dev/null || true
 fi
 
-# Create tmux config
-cat > /root/.tmux.conf << 'TMUX'
+# tmux config
+cat > ~/.tmux.conf << 'TC'
 set -g mouse on
 set -g history-limit 50000
 set -g default-terminal "xterm-256color"
-TMUX
+TC
 
-# Start ttyd with auth, serving a tmux session
-# On connect: attach to existing session or create new one
-exec ttyd \
-  --port 7682 \
-  --writable \
-  --reconnect 30 \
+# Start Claude in tmux
+cd ~/karmabyte
+tmux new-session -d -s claude "claude --dangerously-skip-permissions --continue" || true
+echo "[$(date)] tmux+claude started"
+
+echo "[$(date)] Starting ttyd on port 7682..."
+
+# Start ttyd with auth
+ttyd --port 7682 --writable \
   -c "${TTYD_USER:-karma}:${TTYD_PASS:-KarmaOps2026}" \
   -t fontSize=14 \
   -t 'theme={"background":"#0F0F0F","foreground":"#e0e0e0","cursor":"#7C3AED"}' \
-  bash -c 'tmux has-session -t claude 2>/dev/null && tmux attach -t claude || tmux new-session -s claude -c /root/workspace'
+  tmux attach-session -t claude &
+TTYD_PID=$!
+echo "[$(date)] ttyd PID: $TTYD_PID"
+
+# Watchdog loop
+while true; do
+  sleep 30
+
+  # Restart claude if tmux session died
+  if ! tmux has-session -t claude 2>/dev/null; then
+    echo "[$(date)] Claude died, restarting..."
+    cd ~/karmabyte
+    tmux new-session -d -s claude "claude --dangerously-skip-permissions --continue"
+  fi
+
+  # Restart ttyd if died
+  if ! kill -0 $TTYD_PID 2>/dev/null; then
+    echo "[$(date)] ttyd died, restarting..."
+    ttyd --port 7682 --writable \
+      -c "${TTYD_USER:-karma}:${TTYD_PASS:-KarmaOps2026}" \
+      -t fontSize=14 \
+      -t 'theme={"background":"#0F0F0F","foreground":"#e0e0e0","cursor":"#7C3AED"}' \
+      tmux attach-session -t claude &
+    TTYD_PID=$!
+  fi
+done
